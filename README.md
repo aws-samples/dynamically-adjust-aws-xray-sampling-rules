@@ -1,11 +1,5 @@
-## My Project
-
-TODO: Fill this README out!
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+## Dynamically adjust sampling rules in X-Ray
+This repo is used in the aws blog to showcase dynamic sampling rules on X-Ray 
 
 ## Security
 
