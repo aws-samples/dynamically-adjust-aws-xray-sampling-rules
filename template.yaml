@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+
+Description: X-Ray sampling rule dynamic adjustment
+
+Globals:
+  Function:
+    Tracing: Active
+  Api:
+    TracingEnabled: true
+
+Resources:
+  # Custom X-Ray sampling rule
+  SimpleXRayRule:
+    Type: Custom::XRaySamplingRule
+    Properties:
+      ServiceToken: !Sub '${XRayRuleCustomResourceLambda.Arn}'
+      Name: MyCustomRule
+      Priority: 20
+      FixedRate: 0.05
+      ReservoirSize: 1
+
+  # Custom CFN resource lambda
+  XRayRuleCustomResourceLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: custom_resource/
+      Handler: handler.lambda_handler
+      Runtime: python3.8
+      Role: !Sub '${XRayRuleCustomResourceExecutionRole.Arn}'
+      Timeout: 90
+  XRayRuleCustomResourceExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+      Path: /
+      Policies:
+        - PolicyName: LambdaRequiredPermissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'xray:CreateSamplingRule'
+                  - 'xray:UpdateSamplingRule'
+                  - 'xray:DeleteSamplingRule'
+                Resource:
+                  - !Sub >-
+                    arn:aws:xray:${AWS::Region}:${AWS::AccountId}:sampling-rule/*
+
+  # Web API Lambda                  
+  WebApiFunction:
+    Type: AWS::Serverless::Function 
+    Properties:
+      CodeUri: api/
+      Handler: handler.lambda_handler
+      Runtime: python3.8
+      Role: !Sub '${WebApiExecutionRole.Arn}'
+      Environment:
+        Variables: 
+          XRAY_RULE_ARN: !Sub '${SimpleXRayRule.Arn}'
+      Events:
+        HelloWorld:
+          Type: Api
+          Properties:
+            Path: /
+            Method: get
+  WebApiExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+      Path: /
+      Policies:
+        - PolicyName: LambdaRequiredPermissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'xray:GetSamplingRules'
+                Resource:
+                  - '*'            
+
+  # X-Ray sampling rule adjuster lambda
+  XRayRuleAdjusterLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: xray_rule_adjuster/
+      Handler: handler.lambda_handler
+      Runtime: python3.8
+      Role: !Sub '${XRayRuleAdjusterExecutionRole.Arn}'
+      Environment:
+        Variables: 
+          XRAY_RULE_ARN: !Sub '${SimpleXRayRule.Arn}' 
+      Timeout: 90
+      Events:
+        Trigges:
+          Type: SNS
+          Properties:
+            Topic:
+              Ref: ApiGatewayNotificationTopic
+  XRayRuleAdjusterExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+      Path: /
+      Policies:
+        - PolicyName: LambdaRequiredPermissions
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:UpdateSamplingRule
+                Resource:
+                  - !Sub '${SimpleXRayRule.Arn}'        
+
+  # CloudWatch alarm
+  ApiGatewayAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Number of 5xx errors alarm
+      AlarmActions:
+        - Ref: ApiGatewayNotificationTopic
+      OKActions:
+        - Ref: ApiGatewayNotificationTopic
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: 'notBreaching'
+      Dimensions:
+        - Name: ApiName
+          Value:
+            Ref: 'AWS::StackName'
+  ApiGatewayNotificationTopic:
+    Type: AWS::SNS::Topic
+
+Outputs:
+  WebApi:
+    Description: "API Gateway endpoint URL for Prod stage for WebApi function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
