@@ -165,6 +165,22 @@ Resources:
             Ref: 'AWS::StackName'
   ApiGatewayNotificationTopic:
     Type: AWS::SNS::Topic
+    Properties:
+      KmsMasterKeyId: !Ref NotificationsEncryptionKey
+  NotificationsEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: SSE for SNS notifications
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: !Ref AWS::StackName
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action: 'kms:*'
+            Resource: '*'
 
 Outputs:
   WebApi:
