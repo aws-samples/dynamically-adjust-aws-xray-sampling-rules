@@ -181,6 +181,14 @@ Resources:
                 - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
             Action: 'kms:*'
             Resource: '*'
+          - Effect: Allow
+            Principal:
+              Service:
+                -  cloudwatch.amazonaws.com
+            Action: 
+                - "kms:Decrypt"
+                - "kms:GenerateDataKey*"
+            Resource: '*'
 
 Outputs:
   WebApi:
